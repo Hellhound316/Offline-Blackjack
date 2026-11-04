@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Blackjack</title>
+<style>
+body{background:radial-gradient(circle at 30% 30%,#0f7a2e,#0b6623 60%,#084d1a);font-family:Arial;color:#fff;text-align:center;font-size:14px}
+#clearSaveBtn{position:absolute;top:15px;right:15px;background:#c0392b;color:#fff;padding:8px 14px;border:none;border-radius:6px;cursor:pointer}
+#table{width:850px;margin:20px auto;padding:15px;border:3px solid #ffffff44;border-radius:15px;box-shadow:0 0 20px #000}
+button{padding:6px 12px;margin:3px;font-size:14px;border-radius:6px;border:none;background:#e0b000;color:#222;font-weight:bold}
+button:disabled{background:#555;color:#aaa}
+.card{width:70px;height:100px;margin:3px;display:inline-block}
+#chips{display:flex;flex-wrap:wrap;justify-content:center;max-width:850px;margin:0 auto 10px}
+.chip{width:50px;height:50px;border-radius:50%;line-height:50px;text-align:center;margin:4px;font-weight:bold;color:#fff;border:2px solid #fff;cursor:pointer}
+.red{background:#c0392b}.blue{background:#2980b9}.green{background:#27ae60}.purple{background:#8e44ad}.gold{background:#d4af37}.black{background:#111}
+</style>
+</head>
+<body>
+
+<button id="clearSaveBtn" onclick="clearSave()">Clear Save</button>
+<h2>Blackjack Deluxe</h2>
+
+<div id="table">
+  <div>
+    Bankroll: $<span id="cash">500</span><br>
+    Loan: $<span id="loanDisplay">0</span><br>
+    Credit Level: <span id="creditLevelDisplay">1</span>
+    (Max Loan: $<span id="maxLoanDisplay">10000</span>)
+  </div>
+
+  <div id="chips">
+    <div class="chip red" onclick="addBet(10)">$10</div>
+    <div class="chip blue" onclick="addBet(25)">$25</div>
+    <div class="chip green" onclick="addBet(50)">$50</div>
+    <div class="chip purple" onclick="addBet(100)">$100</div>
+    <div class="chip gold" onclick="addBet(250)">$250</div>
+    <div class="chip gold" onclick="addBet(500)">$500</div>
+    <div class="chip gold" onclick="addBet(1000)">$1K</div>
+    <div class="chip black" onclick="addBet(5000)">$5K</div>
+    <div class="chip black" onclick="addBet(10000)">$10K</div>
+    <div class="chip black" onclick="allIn()">ALL‑IN</div>
+  </div>
+
+  <div>Bet: $<span id="betDisplay">0</span></div>
+
+  <button id="dealBtn" onclick="deal()">Deal</button>
+  <button id="hitBtn" onclick="hit()" disabled>Hit</button>
+  <button id="standBtn" onclick="stand()" disabled>Stand</button>
+  <button id="doubleBtn" onclick="doubleDown()" disabled>Double</button>
+  <button id="splitBtn" onclick="split()" disabled>Split</button>
+  <button id="insureBtn" onclick="buyInsurance()" disabled>Insurance</button>
+  <button id="newRoundBtn" onclick="newRound()" disabled>New Round</button>
+  <button id="loanBtn" onclick="takeLoan()" style="display:none;">Take Loan</button>
+
+  <div id="dealerHand"></div>
+  <div id="playerHand"></div>
+  <div id="playerHand2" style="display:none;"></div>
+  <div id="status"></div>
+  <div id="loanInfo"></div>
+</div>
+
+<script>
+let deck=[],player=[],player2=[],dealer=[];
+let money=500,bet=0,bet2=0,insuranceBet=0;
+let gameOver=false,splitActive=false,currentHand=1;
+let loan=0,maxLoan=10000,loansRepaid=0,creditLevel=1,lastBet=0;
+
+function shortNum(n){
+  if(n>=1e9)return(n/1e9).toFixed(2).replace(/\.00$/,'')+"B";
+  if(n>=1e6)return(n/1e6).toFixed(2).replace(/\.00$/,'')+"M";
+  if(n>=1e3)return(n/1e3).toFixed(2).replace(/\.00$/,'')+"K";
+  return n.toString();
+}
+function updateMoney(){
+  if(money<0)money=0;
+  cash.innerText=shortNum(money);
+}
+function updateBetDisplay(){
+  betDisplay.innerText=shortNum(bet);
+}
+function updateLoanDisplay(){
+  loanDisplay.innerText=shortNum(loan);
+  creditLevelDisplay.innerText=creditLevel;
+  maxLoanDisplay.innerText=shortNum(maxLoan);
+  loanInfo.innerText=loan>0?"Loan active (10% repayment).":"No loan.";
+  loanBtn.style.display=(money<50&&loan<maxLoan)?"inline-block":"none";
+}
+
+function svgCard(v,s){
+  let u={S:"♠",H:"♥",D:"♦",C:"♣"}[s];
+  let c=(s=="H"||s=="D")?"red":"black";
+  return `<div class="card" style="background:#fff;border:2px solid #000;border-radius:6px">
+    <div style="color:${c};padding:2px">${v}${u}</div>
+    <div style="text-align:center;font-size:32px;color:${c}">${u}</div>
+  </div>`;
+}
+function svgBack(){
+  return `<div class="card" style="background:radial-gradient(#0044aa,#001133);border:2px solid #000;border-radius:6px"></div>`;
+}
+
+function createDeck(){
+  let s=["S","H","D","C"],v=["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+  deck=[];
+  for(let i of s)for(let j of v)deck.push({value:j,suit:i});
+  deck.sort(()=>Math.random()-0.5);
+}
+function cardValue(c){
+  if(c.value=="A")return 11;
+  if(["J","Q","K"].includes(c.value))return 10;
+  return parseInt(c.value);
+}
+function handValue(h){
+  let t=h.reduce((x,c)=>x+cardValue(c),0);
+  let a=h.filter(c=>c.value=="A").length;
+  while(t>21&&a>0){t-=10;a--}
+  return t;
+}
+
+function displayHands(showDealer){
+  playerHand.innerHTML="P1 ("+handValue(player)+"):<br>"+player.map(c=>svgCard(c.value,c.suit)).join("");
+  if(splitActive){
+    playerHand2.style.display="block";
+    playerHand2.innerHTML="P2 ("+handValue(player2)+"):<br>"+player2.map(c=>svgCard(c.value,c.suit)).join("");
+  }else{
+    playerHand2.style.display="none";
+  }
+  if(showDealer){
+    dealerHand.innerHTML="Dealer ("+handValue(dealer)+"):<br>"+dealer.map(c=>svgCard(c.value,c.suit)).join("");
+  }else if(dealer.length){
+    dealerHand.innerHTML="Dealer:<br>"+svgCard(dealer[0].value,dealer[0].suit)+svgBack();
+  }
+}
+
+function saveProgress(){
+  localStorage.setItem("bj",JSON.stringify({
+    money,bet,bet2,insuranceBet,player,player2,dealer,
+    splitActive,currentHand,gameOver,loan,maxLoan,
+    loansRepaid,creditLevel,lastBet
+  }));
+}
+function loadProgress(){
+  let x=localStorage.getItem("bj");
+  if(!x){
+    updateMoney();updateBetDisplay();updateLoanDisplay();
+    return;
+  }
+  x=JSON.parse(x);
+  money=x.money||500;
+  bet=x.bet||0;
+  bet2=x.bet2||0;
+  insuranceBet=x.insuranceBet||0;
+  player=x.player||[];
+  player2=x.player2||[];
+  dealer=x.dealer||[];
+  splitActive=x.splitActive||false;
+  currentHand=x.currentHand||1;
+  gameOver=x.gameOver||false;
+  loan=x.loan||0;
+  maxLoan=x.maxLoan||10000;
+  loansRepaid=x.loansRepaid||0;
+  creditLevel=x.creditLevel||1;
+  lastBet=x.lastBet||0;
+  updateMoney();updateBetDisplay();updateLoanDisplay();
+  displayHands(gameOver);
+}
+
+function addBet(a){
+  if(player.length||dealer.length||gameOver){alert("Bet before dealing.");return;}
+  if(money<a){alert("Not enough money.");return;}
+  bet+=a;
+  lastBet=bet;
+  money-=a;
+  updateMoney();
+  updateBetDisplay();
+  saveProgress();
+}
+
+function allIn(){
+  if(player.length||dealer.length||gameOver){alert("Bet before dealing.");return;}
+  if(money<=0){alert("No money left.");return;}
+  bet=money;
+  lastBet=bet;
+  money=0;
+  updateMoney();
+  updateBetDisplay();
+  saveProgress();
+}
+
+function takeLoan(){
+  if(loan+500>maxLoan){alert("Limit reached");return;}
+  loan+=500;
+  money+=500;
+  updateMoney();
+  updateLoanDisplay();
+  status.innerText="Loan +$500";
+  saveProgress();
+}
+
+function deal(){
+  if(bet<=0){alert("Place a bet first.");return;}
+  if(money<bet){alert("Not enough bankroll for that bet.");return;}
+
+  createDeck();
+  player=[deck.pop(),deck.pop()];
+  dealer=[deck.pop(),deck.pop()];
+  player2=[];
+  splitActive=false;
+  bet2=0;
+  insuranceBet=0;
+  gameOver=false;
+  currentHand=1;
+
+  status.innerText="";
+  displayHands(false);
+
+  dealBtn.disabled=true;
+  hitBtn.disabled=false;
+  standBtn.disabled=false;
+  doubleBtn.disabled=false;
+
+  splitBtn.disabled=!(player[0].value==player[1].value&&money>=bet);
+  insureBtn.disabled=!(dealer[0].value=="A"&&money>=bet/2);
+
+  if(handValue(player)==21)stand();
+
+  saveProgress();
+}
+
+function buyInsurance(){
+  let m=Math.floor(bet/2);
+  if(money<m){alert("Not enough money");return;}
+  insuranceBet=m;
+  money-=m;
+  updateMoney();
+  status.innerText="Insurance bought";
+  insureBtn.disabled=true;
+  saveProgress();
+}
+
+function doubleDown(){
+  if(money<bet){alert("Not enough money");return;}
+  money-=bet;
+  bet*=2;
+  updateMoney();
+  updateBetDisplay();
+  player.push(deck.pop());
+  displayHands(false);
+  hitBtn.disabled=true;
+  standBtn.disabled=true;
+  doubleBtn.disabled=true;
+  splitBtn.disabled=true;
+  insureBtn.disabled=true;
+  stand();
+  saveProgress();
+}
+
+function split(){
+  if(player[0].value!=player[1].value||money<bet)return;
+  splitActive=true;
+  player2=[player.pop()];
+  bet2=bet;
+  money-=bet2;
+  player.push(deck.pop());
+  player2.push(deck.pop());
+  currentHand=1;
+  displayHands(false);
+  splitBtn.disabled=true;
+  doubleBtn.disabled=true;
+  saveProgress();
+}
+
+function hit(){
+  if(!splitActive||currentHand==1)player.push(deck.pop());
+  else player2.push(deck.pop());
+  displayHands(false);
+  if(!splitActive&&handValue(player)>21){
+    status.innerText="Bust";
+    endRound();
+  }else if(splitActive&&currentHand==1&&handValue(player)>21){
+    currentHand=2;
+    status.innerText="P1 bust";
+  }else if(splitActive&&currentHand==2&&handValue(player2)>21){
+    status.innerText="P2 bust";
+    endRound();
+  }
+  saveProgress();
+}
+
+function stand(){
+  if(splitActive&&currentHand==1){
+    currentHand=2;
+    status.innerText="P1 stand";
+    saveProgress();
+    return;
+  }
+  while(handValue(dealer)<17)dealer.push(deck.pop());
+  displayHands(true);
+  let dt=handValue(dealer);
+
+  if(insuranceBet>0&&dt==21&&dealer.length==2&&dealer[0].value=="A"){
+    money+=insuranceBet*3;
+    updateMoney();
+    status.innerText="Insurance wins";
+  }
+
+  if(!splitActive)resolveSingle(dt);
+  else resolveSplit(dt);
+
+  endRound();
+  saveProgress();
+}
+
+function repay(w){
+  if(loan<=0||w<=0)return w;
+  let r=Math.floor(w*0.1);
+  if(r>loan)r=loan;
+  loan-=r;
+  w-=r;
+  if(loan==0){
+    loansRepaid++;
+    if(loansRepaid>=10){
+      creditLevel++;
+      maxLoan*=2;
+      loansRepaid=0;
+      status.innerText+=" Credit Up!";
+    }
+  }
+  updateLoanDisplay();
+  return w;
+}
+
+function resolveSingle(dt){
+  let p=handValue(player),w=0,m="";
+  if(p>21){
+    m="Lose";
+    if(money>=bet)money-=bet;
+    bet=0;
+    updateBetDisplay();
+  }else if(dt>21||p>dt){
+    m="Win";
+    w=bet*2;
+  }else if(p<dt){
+    m="Lose";
+    if(money>=bet)money-=bet;
+    bet=0;
+    updateBetDisplay();
+  }else{
+    m="Push";
+    w=bet;
+  }
+  w=repay(w);
+  money+=w;
+  updateMoney();
+  status.innerText=m;
+}
+
+function resolveSplit(dt){
+  let p1=handValue(player),p2=handValue(player2),w=0,r=[];
+  if(p1>21){
+    r.push("P1 bust");
+    if(money>=bet)money-=bet;
+    bet=0;
+  }else if(dt>21||p1>dt){
+    r.push("P1 win");
+    w+=bet*2;
+  }else if(p1<dt){
+    r.push("P1 lose");
+    if(money>=bet)money-=bet;
+    bet=0;
+  }else{
+    r.push("P1 push");
+    w+=bet;
+  }
+
+  if(p2>21){
+    r.push("P2 bust");
+    if(money>=bet2)money-=bet2;
+    bet2=0;
+  }else if(dt>21||p2>dt){
+    r.push("P2 win");
+    w+=bet2*2;
+  }else if(p2<dt){
+    r.push("P2 lose");
+    if(money>=bet2)money-=bet2;
+    bet2=0;
+  }else{
+    r.push("P2 push");
+    w+=bet2;
+  }
+
+  updateBetDisplay();
+  w=repay(w);
+  money+=w;
+  updateMoney();
+  status.innerText=r.join(" ");
+}
+
+function endRound(){
+  gameOver=true;
+  hitBtn.disabled=true;
+  standBtn.disabled=true;
+  doubleBtn.disabled=true;
+  splitBtn.disabled=true;
+  insureBtn.disabled=true;
+  newRoundBtn.disabled=false;
+  saveProgress();
+}
+
+function newRound(){
+  player=[];
+  player2=[];
+  dealer=[];
+  gameOver=false;
+  splitActive=false;
+  currentHand=1;
+
+  if(money>=lastBet)bet=lastBet;
+  else bet=0;
+
+  bet2=0;
+  insuranceBet=0;
+
+  updateBetDisplay();
+  dealerHand.innerHTML="";
+  playerHand.innerHTML="";
+  playerHand2.innerHTML="";
+  playerHand2.style.display="none";
+  status.innerText="";
+
+  dealBtn.disabled=false;
+  hitBtn.disabled=true;
+  standBtn.disabled=true;
+  doubleBtn.disabled=true;
+  splitBtn.disabled=true;
+  insureBtn.disabled=true;
+  newRoundBtn.disabled=true;
+
+  saveProgress();
+}
+
+function clearSave(){
+  if(confirm("Delete all saved data?")){
+    localStorage.clear();
+    alert("Save cleared.");
+    location.reload();
+  }
+}
+
+loadProgress();
+</script>
+</body>
+</html>
